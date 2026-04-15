@@ -53,6 +53,7 @@ const starterRecipes = [
 let recipes = [];
 let currentMenuRecipeIds = [];
 let groceryItems = [];
+let editingRecipeId = null;
 let usesSupabaseForWeekMenu = Boolean(supabaseClient);
 let usesSupabaseForGroceries = Boolean(supabaseClient);
 
@@ -375,27 +376,79 @@ function renderRecipes() {
   }
 
   recipeList.innerHTML = recipes
-    .map(
-      (recipe) => `
+    .map((recipe) => {
+      const isEditing = String(recipe.id) === String(editingRecipeId);
+
+      if (isEditing) {
+        return `
+        <article class="recipe-card">
+          <form class="edit-recipe-form" data-edit-form-id="${escapeHtml(String(recipe.id))}">
+            <div class="recipe-card-header">
+              <div>
+                <h4>Edit recipe</h4>
+              </div>
+              <button
+                class="ghost-button"
+                type="button"
+                data-cancel-id="${escapeHtml(String(recipe.id))}"
+              >
+                Cancel
+              </button>
+            </div>
+            <label class="field">
+              <span>Recipe name</span>
+              <input
+                name="recipeName"
+                type="text"
+                value="${escapeHtml(recipe.name)}"
+                required
+              />
+            </label>
+            <label class="field">
+              <span>Ingredients</span>
+              <textarea
+                name="recipeIngredients"
+                rows="4"
+                required
+              >${escapeHtml(recipe.ingredients.join("\n"))}</textarea>
+            </label>
+            <div class="edit-actions">
+              <button class="secondary-button" type="submit">Save</button>
+            </div>
+          </form>
+        </article>
+      `;
+      }
+
+      return `
         <article class="recipe-card">
           <div class="recipe-card-header">
             <div>
               <h4>${escapeHtml(recipe.name)}</h4>
             </div>
-            <button
-              class="ghost-button"
-              type="button"
-              data-remove-id="${escapeHtml(String(recipe.id))}"
-            >
-              Remove
-            </button>
+            <div>
+              <button
+                class="ghost-button"
+                type="button"
+                data-edit-id="${escapeHtml(String(recipe.id))}"
+              >
+                Edit
+              </button>
+              <button
+                class="ghost-button"
+                type="button"
+                data-remove-id="${escapeHtml(String(recipe.id))}"
+              >
+                Remove
+              </button>
+            </div>
           </div>
           <ul class="ingredient-list">
             ${recipe.ingredients.map((ingredient) => `<li>${escapeHtml(ingredient)}</li>`).join("")}
           </ul>
         </article>
-      `
-    )
+      `;
+    })
     .join("");
 
   updateRecipeCount();
@@ -405,7 +458,7 @@ function renderWeekMenu(menuRecipes) {
   weekMenu.innerHTML = menuRecipes
     .map(
       (recipe, index) => `
-        <article class="day-card">
+        <article class="day-card" data-day-index="${index}" title="Click to reshuffle this dish">
           <div class="day-card-header">
             <div>
               <div class="day-label">${menuDays[index]}</div>
@@ -417,6 +470,24 @@ function renderWeekMenu(menuRecipes) {
       `
     )
     .join("");
+}
+
+function renderWeekMenuCard(slotIndex, recipe) {
+  const dayCard = weekMenu.querySelector(`[data-day-index="${slotIndex}"]`);
+
+  if (!dayCard) {
+    return;
+  }
+
+  dayCard.innerHTML = `
+    <div class="day-card-header">
+      <div>
+        <div class="day-label">${menuDays[slotIndex]}</div>
+        <h4>${escapeHtml(recipe.name)}</h4>
+      </div>
+    </div>
+    <p>${recipe.ingredients.map(escapeHtml).join(", ")}</p>
+  `;
 }
 
 function renderGroceryList() {
@@ -484,6 +555,49 @@ function getMenuRecipesFromIds(menuRecipeIds) {
   return menuRecipeIds
     .map((recipeId) => recipes.find((recipe) => String(recipe.id) === String(recipeId)))
     .filter(Boolean);
+}
+
+function getRandomReplacementRecipe(excludeRecipeId) {
+  const candidates = recipes.filter(
+    (recipe) => String(recipe.id) !== String(excludeRecipeId)
+  );
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const randomIndex = Math.floor(Math.random() * candidates.length);
+  return candidates[randomIndex];
+}
+
+async function replaceMenuRecipeAtIndex(slotIndex) {
+  if (recipes.length <= 1) {
+    return;
+  }
+
+  const menuRecipes = getMenuRecipesFromIds(currentMenuRecipeIds);
+  const currentRecipe = menuRecipes[slotIndex];
+
+  if (!currentRecipe) {
+    return;
+  }
+
+  const replacementRecipe = getRandomReplacementRecipe(currentRecipe.id);
+
+  if (!replacementRecipe) {
+    return;
+  }
+
+  const updatedMenuRecipes = [...menuRecipes];
+  updatedMenuRecipes[slotIndex] = replacementRecipe;
+
+  currentMenuRecipeIds = updatedMenuRecipes.map((recipe) => String(recipe.id));
+  groceryItems = buildGroceryItemsFromMenu(updatedMenuRecipes, groceryItems);
+  renderWeekMenuCard(slotIndex, replacementRecipe);
+  renderGroceryList();
+  await saveWeekMenuState();
+  await saveGroceryItems();
+  updateSyncStatus();
 }
 
 async function syncMenuAndGroceries(menuRecipes) {
@@ -566,6 +680,38 @@ async function addRecipe(recipe) {
   recipes = [normalizeRecipe(data), ...recipes];
 }
 
+async function updateRecipe(updatedRecipe) {
+  if (!supabaseClient) {
+    recipes = recipes.map((recipe) =>
+      String(recipe.id) === String(updatedRecipe.id) ? updatedRecipe : recipe
+    );
+    saveRecipesToLocalStorage();
+    return;
+  }
+
+  const foundRecipe = recipes.find(
+    (recipe) => String(recipe.id) === String(updatedRecipe.id)
+  );
+  const targetId = foundRecipe ? foundRecipe.id : updatedRecipe.id;
+
+  const { error } = await supabaseClient
+    .from("recipes")
+    .update({
+      name: updatedRecipe.name,
+      ingredients: updatedRecipe.ingredients,
+    })
+    .eq("id", targetId);
+
+  if (error) {
+    setStorageStatus("Supabase update failed. Please try again.", "error");
+    throw error;
+  }
+
+  recipes = recipes.map((recipe) =>
+    String(recipe.id) === String(updatedRecipe.id) ? updatedRecipe : recipe
+  );
+}
+
 async function removeRecipe(recipeId) {
   if (!supabaseClient) {
     recipes = recipes.filter((recipe) => String(recipe.id) !== String(recipeId));
@@ -573,7 +719,12 @@ async function removeRecipe(recipeId) {
     return;
   }
 
-  const { error } = await supabaseClient.from("recipes").delete().eq("id", recipeId);
+  const foundRecipe = recipes.find(
+    (recipe) => String(recipe.id) === String(recipeId)
+  );
+  const targetId = foundRecipe ? foundRecipe.id : recipeId;
+
+  const { error } = await supabaseClient.from("recipes").delete().eq("id", targetId);
 
   if (error) {
     setStorageStatus("Supabase delete failed. Please try again.", "error");
@@ -611,16 +762,76 @@ recipeForm.addEventListener("submit", async (event) => {
 });
 
 recipeList.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-remove-id]");
+  const removeButton = event.target.closest("[data-remove-id]");
+  const editButton = event.target.closest("[data-edit-id]");
+  const cancelButton = event.target.closest("[data-cancel-id]");
 
-  if (!button) {
+  if (removeButton) {
+    try {
+      await removeRecipe(removeButton.dataset.removeId);
+      editingRecipeId = null;
+      renderRecipes();
+      await buildWeekMenu();
+    } catch (error) {
+      console.error(error);
+    }
+
     return;
   }
 
-  try {
-    await removeRecipe(button.dataset.removeId);
+  if (editButton) {
+    editingRecipeId = editButton.dataset.editId;
     renderRecipes();
-    await buildWeekMenu();
+    return;
+  }
+
+  if (cancelButton) {
+    editingRecipeId = null;
+    renderRecipes();
+    return;
+  }
+});
+
+recipeList.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-edit-form-id]");
+
+  if (!form) {
+    return;
+  }
+
+  event.preventDefault();
+
+  const recipeId = form.dataset.editFormId;
+  const nameInput = form.querySelector("input[name='recipeName']");
+  const ingredientsInput = form.querySelector("textarea[name='recipeIngredients']");
+
+  if (!nameInput || !ingredientsInput) {
+    return;
+  }
+
+  const name = nameInput.value.trim();
+  const ingredients = parseIngredients(ingredientsInput.value);
+
+  if (!name || ingredients.length === 0) {
+    return;
+  }
+
+  const updatedRecipe = {
+    id: recipeId,
+    name,
+    ingredients,
+  };
+
+  try {
+    await updateRecipe(updatedRecipe);
+    editingRecipeId = null;
+    renderRecipes();
+
+    const currentMenuRecipes = getMenuRecipesFromIds(currentMenuRecipeIds);
+
+    if (currentMenuRecipes.some((recipe) => String(recipe.id) === String(recipeId))) {
+      await syncMenuAndGroceries(currentMenuRecipes);
+    }
   } catch (error) {
     console.error(error);
   }
@@ -637,6 +848,38 @@ groceryList.addEventListener("change", async (event) => {
     await toggleGroceryItem(checkbox.dataset.groceryKey, checkbox.checked);
   } catch (error) {
     console.error(error);
+  }
+});
+
+weekMenu.addEventListener("click", async (event) => {
+  const dayCard = event.target.closest("[data-day-index]");
+
+  if (!dayCard) {
+    return;
+  }
+
+  const dayIndex = Number(dayCard.dataset.dayIndex);
+
+  if (Number.isNaN(dayIndex) || recipes.length <= 1) {
+    return;
+  }
+
+  const animationDelay = 320;
+
+  if (dayCard.classList.contains("is-shuffling")) {
+    dayCard.classList.remove("is-shuffling");
+    void dayCard.offsetWidth;
+  }
+
+  dayCard.classList.add("is-shuffling");
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, animationDelay));
+    await replaceMenuRecipeAtIndex(dayIndex);
+  } catch (error) {
+    console.error(error);
+  } finally {
+    dayCard.classList.remove("is-shuffling");
   }
 });
 
