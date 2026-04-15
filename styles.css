@@ -295,6 +295,7 @@ textarea:focus {
   height: 1.1rem;
   margin: 0;
   accent-color: var(--primary);
+  border-radius: 0.35rem;
   flex: 0 0 auto;
 }
 
