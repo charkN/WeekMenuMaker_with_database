@@ -4,6 +4,9 @@ const recipeIngredientsInput = document.querySelector("#recipe-ingredients");
 const recipeList = document.querySelector("#recipe-list");
 const recipeCount = document.querySelector("#recipe-count");
 const weekMenu = document.querySelector("#week-menu");
+const groceryRecipeFilters = document.querySelector("#grocery-recipe-filters");
+const groceryItemForm = document.querySelector("#grocery-item-form");
+const groceryItemNameInput = document.querySelector("#grocery-item-name");
 const groceryList = document.querySelector("#grocery-list");
 const groceryCount = document.querySelector("#grocery-count");
 const makeMenuButton = document.querySelector("#make-menu-button");
@@ -11,6 +14,7 @@ const storageStatus = document.querySelector("#storage-status");
 
 const storageKey = "week-menu-maker-recipes";
 const menuStorageKey = "week-menu-maker-current-menu";
+const includedRecipesStorageKey = "week-menu-maker-included-grocery-recipes";
 const groceryStorageKey = "week-menu-maker-grocery-items";
 const weekMenuStateKey = "default-week-menu";
 const supabaseConfig = window.WEEK_MENU_SUPABASE_CONFIG ?? {};
@@ -27,9 +31,9 @@ const supabaseClient = isSupabaseConfigured
   : null;
 
 const menuDays = [
-  "Monday",
-  "Tuesday",
-  "Wednesday",
+  "Day 1",
+  "Day 2",
+  "Day 3",
 ];
 
 const starterRecipes = [
@@ -52,6 +56,7 @@ const starterRecipes = [
 
 let recipes = [];
 let currentMenuRecipeIds = [];
+let includedGroceryRecipeIds = [];
 let groceryItems = [];
 let editingRecipeId = null;
 let usesSupabaseForWeekMenu = Boolean(supabaseClient);
@@ -135,6 +140,25 @@ function loadWeekMenuFromLocalStorage() {
 
 function saveWeekMenuToLocalStorage() {
   localStorage.setItem(menuStorageKey, JSON.stringify(currentMenuRecipeIds));
+  localStorage.setItem(
+    includedRecipesStorageKey,
+    JSON.stringify(includedGroceryRecipeIds.map(String))
+  );
+}
+
+function loadIncludedRecipesFromLocalStorage() {
+  const savedIncludedRecipes = localStorage.getItem(includedRecipesStorageKey);
+
+  if (!savedIncludedRecipes) {
+    return [];
+  }
+
+  try {
+    const parsedIncludedRecipes = JSON.parse(savedIncludedRecipes);
+    return Array.isArray(parsedIncludedRecipes) ? parsedIncludedRecipes.map(String) : [];
+  } catch {
+    return [];
+  }
 }
 
 function loadGroceriesFromLocalStorage() {
@@ -178,13 +202,31 @@ function normalizeRecipe(record) {
   };
 }
 
+function upsertRecipeInState(recipeToSave) {
+  const normalizedRecipe = normalizeRecipe(recipeToSave);
+  const existingRecipeIndex = recipes.findIndex(
+    (recipe) => String(recipe.id) === String(normalizedRecipe.id)
+  );
+
+  if (existingRecipeIndex === -1) {
+    recipes = [normalizedRecipe, ...recipes];
+  } else {
+    recipes = recipes.map((recipe) =>
+      String(recipe.id) === String(normalizedRecipe.id) ? normalizedRecipe : recipe
+    );
+  }
+
+  saveRecipesToLocalStorage();
+}
+
 function isValidGroceryItemShape(item) {
   return (
     item &&
     typeof item.key === "string" &&
     typeof item.name === "string" &&
     Number.isInteger(item.count) &&
-    typeof item.checked === "boolean"
+    typeof item.checked === "boolean" &&
+    (item.sourceType === undefined || typeof item.sourceType === "string")
   );
 }
 
@@ -194,6 +236,15 @@ function normalizeGroceryItem(record) {
     name: String(record.ingredient_name ?? record.name),
     count: Number(record.item_count ?? record.count ?? 1),
     checked: Boolean(record.checked),
+    sourceType: String(record.source_type ?? record.sourceType ?? "generated"),
+    sourceRecipeId:
+      record.source_recipe_id ?? record.sourceRecipeId
+        ? String(record.source_recipe_id ?? record.sourceRecipeId)
+        : null,
+    sourceRecipeName:
+      record.source_recipe_name ?? record.sourceRecipeName
+        ? String(record.source_recipe_name ?? record.sourceRecipeName)
+        : null,
   };
 }
 
@@ -223,24 +274,29 @@ async function loadRecipes() {
 async function loadWeekMenuState() {
   if (!supabaseClient || !usesSupabaseForWeekMenu) {
     currentMenuRecipeIds = loadWeekMenuFromLocalStorage();
+    includedGroceryRecipeIds = loadIncludedRecipesFromLocalStorage();
     usesSupabaseForWeekMenu = false;
     return;
   }
 
   const { data, error } = await supabaseClient
     .from("week_menu_state")
-    .select("recipe_ids")
+    .select("*")
     .eq("singleton_key", weekMenuStateKey)
     .maybeSingle();
 
   if (error) {
     currentMenuRecipeIds = loadWeekMenuFromLocalStorage();
+    includedGroceryRecipeIds = loadIncludedRecipesFromLocalStorage();
     usesSupabaseForWeekMenu = false;
     console.error(error);
     return;
   }
 
   currentMenuRecipeIds = Array.isArray(data?.recipe_ids) ? data.recipe_ids.map(String) : [];
+  includedGroceryRecipeIds = Array.isArray(data?.included_grocery_recipe_ids)
+    ? data.included_grocery_recipe_ids.map(String)
+    : [...currentMenuRecipeIds];
 }
 
 async function saveWeekMenuState() {
@@ -253,6 +309,7 @@ async function saveWeekMenuState() {
     {
       singleton_key: weekMenuStateKey,
       recipe_ids: currentMenuRecipeIds.map(String),
+      included_grocery_recipe_ids: includedGroceryRecipeIds.map(String),
     },
     {
       onConflict: "singleton_key",
@@ -262,6 +319,10 @@ async function saveWeekMenuState() {
   if (error) {
     usesSupabaseForWeekMenu = false;
     saveWeekMenuToLocalStorage();
+    setStorageStatus(
+      "Supabase needs the latest week menu columns before grocery filters can sync. Run the README migration.",
+      "error"
+    );
     console.error(error);
   }
 }
@@ -275,7 +336,7 @@ async function loadGroceryItems() {
 
   const { data, error } = await supabaseClient
     .from("grocery_checklist_items")
-    .select("item_key, ingredient_name, item_count, checked")
+    .select("*")
     .order("ingredient_name", { ascending: true });
 
   if (error) {
@@ -302,6 +363,10 @@ async function saveGroceryItems() {
   if (deleteError) {
     usesSupabaseForGroceries = false;
     saveGroceriesToLocalStorage();
+    setStorageStatus(
+      "Supabase needs the latest grocery columns before manual items can sync. Run the README migration.",
+      "error"
+    );
     console.error(deleteError);
     return;
   }
@@ -316,6 +381,9 @@ async function saveGroceryItems() {
     item_count: item.count,
     checked: item.checked,
     label: formatGroceryLabel(item),
+    source_type: item.sourceType ?? "generated",
+    source_recipe_id: item.sourceRecipeId,
+    source_recipe_name: item.sourceRecipeName,
   }));
 
   const { error: insertError } = await supabaseClient
@@ -325,6 +393,10 @@ async function saveGroceryItems() {
   if (insertError) {
     usesSupabaseForGroceries = false;
     saveGroceriesToLocalStorage();
+    setStorageStatus(
+      "Supabase needs the latest grocery columns before manual items can sync. Run the README migration.",
+      "error"
+    );
     console.error(insertError);
   }
 }
@@ -357,6 +429,103 @@ function buildIngredientKey(ingredient) {
 
 function formatGroceryLabel(item) {
   return item.count > 1 ? `${item.name} x ${item.count}` : item.name;
+}
+
+function getIncludedMenuRecipes() {
+  const includedIds = new Set(includedGroceryRecipeIds.map(String));
+  return getMenuRecipesFromIds(currentMenuRecipeIds).filter((recipe) =>
+    includedIds.has(String(recipe.id))
+  );
+}
+
+function sortGroceryItems(itemList) {
+  return [...itemList].sort((firstItem, secondItem) => {
+    if (firstItem.sourceType !== secondItem.sourceType) {
+      return firstItem.sourceType === "manual" ? -1 : 1;
+    }
+
+    return firstItem.name.localeCompare(secondItem.name);
+  });
+}
+
+function buildManualGroceryItem(name, existingItem = null) {
+  const normalizedName = normalizeIngredientName(name);
+
+  return {
+    key: existingItem?.key ?? `manual:${crypto.randomUUID()}`,
+    name: normalizedName,
+    count: 1,
+    checked: existingItem?.checked ?? false,
+    sourceType: "manual",
+    sourceRecipeId: null,
+    sourceRecipeName: null,
+  };
+}
+
+function buildGeneratedGroceryItems(menuRecipes, existingItems = []) {
+  const counts = new Map();
+  const checkedByKey = new Map(
+    existingItems
+      .filter((item) => item.sourceType !== "manual")
+      .map((item) => [item.key, item.checked])
+  );
+
+  for (const recipe of menuRecipes) {
+    for (const ingredient of recipe.ingredients) {
+      const normalizedName = normalizeIngredientName(ingredient);
+
+      if (!normalizedName) {
+        continue;
+      }
+
+      const key = buildIngredientKey(normalizedName);
+      const existingEntry = counts.get(key);
+
+      if (existingEntry) {
+        existingEntry.count += 1;
+        continue;
+      }
+
+      counts.set(key, {
+        key,
+        name: normalizedName,
+        count: 1,
+        checked: checkedByKey.get(key) ?? false,
+        sourceType: "generated",
+        sourceRecipeId: null,
+        sourceRecipeName: null,
+      });
+    }
+  }
+
+  return [...counts.values()];
+}
+
+function rebuildGroceryItems(menuRecipes, existingItems = groceryItems) {
+  const manualItems = existingItems
+    .filter((item) => item.sourceType === "manual")
+    .map((item) => buildManualGroceryItem(item.name, item));
+
+  return sortGroceryItems([
+    ...manualItems,
+    ...buildGeneratedGroceryItems(menuRecipes, existingItems),
+  ]);
+}
+
+function syncIncludedRecipeIdsWithMenu() {
+  const currentIds = new Set(currentMenuRecipeIds.map(String));
+
+  if (currentIds.size === 0) {
+    includedGroceryRecipeIds = [];
+    return;
+  }
+
+  const nextIncludedIds = includedGroceryRecipeIds.filter((recipeId) =>
+    currentIds.has(String(recipeId))
+  );
+
+  includedGroceryRecipeIds =
+    nextIncludedIds.length > 0 ? nextIncludedIds : [...currentMenuRecipeIds];
 }
 
 function updateRecipeCount() {
@@ -413,11 +582,17 @@ function renderRecipes() {
               >${escapeHtml(recipe.ingredients.join("\n"))}</textarea>
             </label>
             <div class="edit-actions">
-              <button class="secondary-button" type="submit">Save</button>
-            </div>
-          </form>
-        </article>
-      `;
+	              <button
+	                class="secondary-button"
+	                type="submit"
+	                data-save-id="${escapeHtml(String(recipe.id))}"
+	              >
+	                Save
+	              </button>
+	            </div>
+	          </form>
+	        </article>
+	      `;
       }
 
       return `
@@ -490,6 +665,41 @@ function renderWeekMenuCard(slotIndex, recipe) {
   `;
 }
 
+function renderGroceryRecipeFilters() {
+  const menuRecipes = getMenuRecipesFromIds(currentMenuRecipeIds);
+
+  if (menuRecipes.length === 0) {
+    groceryRecipeFilters.innerHTML =
+      '<p class="empty-state">Pick recipes to include after you make a menu.</p>';
+    return;
+  }
+
+  const includedIds = new Set(includedGroceryRecipeIds.map(String));
+
+  groceryRecipeFilters.innerHTML = `
+    <div class="grocery-filter-header">
+      <h4>Include recipes</h4>
+      <p>Uncheck any recipe you do not want in the grocery list.</p>
+    </div>
+    <div class="grocery-filter-list">
+      ${menuRecipes
+        .map(
+          (recipe, index) => `
+            <label class="grocery-filter-chip">
+              <input
+                type="checkbox"
+                data-grocery-recipe-id="${escapeHtml(String(recipe.id))}"
+                ${includedIds.has(String(recipe.id)) ? "checked" : ""}
+              />
+              <span>${escapeHtml(`${menuDays[index]}: ${recipe.name}`)}</span>
+            </label>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderGroceryList() {
   if (groceryItems.length === 0) {
     groceryList.innerHTML =
@@ -501,54 +711,29 @@ function renderGroceryList() {
   groceryList.innerHTML = groceryItems
     .map(
       (item) => `
-        <label class="grocery-item${item.checked ? " is-checked" : ""}">
-          <input
-            class="grocery-checkbox"
-            type="checkbox"
-            data-grocery-key="${escapeHtml(item.key)}"
-            ${item.checked ? "checked" : ""}
-          />
-          <span class="grocery-item-text">${escapeHtml(formatGroceryLabel(item))}</span>
-        </label>
+        <div class="grocery-item${item.checked ? " is-checked" : ""}">
+          <label class="grocery-item-main">
+            <input
+              class="grocery-checkbox"
+              type="checkbox"
+              data-grocery-key="${escapeHtml(item.key)}"
+              ${item.checked ? "checked" : ""}
+            />
+            <span class="grocery-item-text">${escapeHtml(formatGroceryLabel(item))}</span>
+          </label>
+          ${
+            item.sourceType === "manual"
+              ? `<button class="ghost-button grocery-remove-button" type="button" data-remove-grocery-key="${escapeHtml(
+                  item.key
+                )}">Remove</button>`
+              : '<span class="grocery-item-tag">Recipe</span>'
+          }
+        </div>
       `
     )
     .join("");
 
   updateGroceryCount();
-}
-
-function buildGroceryItemsFromMenu(menuRecipes, existingItems = []) {
-  const counts = new Map();
-  const checkedByKey = new Map(existingItems.map((item) => [item.key, item.checked]));
-
-  for (const recipe of menuRecipes) {
-    for (const ingredient of recipe.ingredients) {
-      const normalizedName = normalizeIngredientName(ingredient);
-
-      if (!normalizedName) {
-        continue;
-      }
-
-      const key = buildIngredientKey(normalizedName);
-      const existingEntry = counts.get(key);
-
-      if (existingEntry) {
-        existingEntry.count += 1;
-        continue;
-      }
-
-      counts.set(key, {
-        key,
-        name: normalizedName,
-        count: 1,
-        checked: checkedByKey.get(key) ?? false,
-      });
-    }
-  }
-
-  return [...counts.values()].sort((firstItem, secondItem) =>
-    firstItem.name.localeCompare(secondItem.name)
-  );
 }
 
 function getMenuRecipesFromIds(menuRecipeIds) {
@@ -592,8 +777,10 @@ async function replaceMenuRecipeAtIndex(slotIndex) {
   updatedMenuRecipes[slotIndex] = replacementRecipe;
 
   currentMenuRecipeIds = updatedMenuRecipes.map((recipe) => String(recipe.id));
-  groceryItems = buildGroceryItemsFromMenu(updatedMenuRecipes, groceryItems);
+  includedGroceryRecipeIds = [...currentMenuRecipeIds];
+  groceryItems = rebuildGroceryItems(updatedMenuRecipes, groceryItems);
   renderWeekMenuCard(slotIndex, replacementRecipe);
+  renderGroceryRecipeFilters();
   renderGroceryList();
   await saveWeekMenuState();
   await saveGroceryItems();
@@ -602,8 +789,10 @@ async function replaceMenuRecipeAtIndex(slotIndex) {
 
 async function syncMenuAndGroceries(menuRecipes) {
   currentMenuRecipeIds = menuRecipes.map((recipe) => String(recipe.id));
-  groceryItems = buildGroceryItemsFromMenu(menuRecipes, groceryItems);
+  syncIncludedRecipeIdsWithMenu();
+  groceryItems = rebuildGroceryItems(getIncludedMenuRecipes(), groceryItems);
   renderWeekMenu(menuRecipes);
+  renderGroceryRecipeFilters();
   renderGroceryList();
   await saveWeekMenuState();
   await saveGroceryItems();
@@ -615,7 +804,9 @@ async function buildWeekMenu() {
     weekMenu.innerHTML =
       '<p class="empty-state">Please add at least one recipe before making a 3 day menu.</p>';
     currentMenuRecipeIds = [];
+    includedGroceryRecipeIds = [];
     groceryItems = [];
+    renderGroceryRecipeFilters();
     renderGroceryList();
     await saveWeekMenuState();
     await saveGroceryItems();
@@ -634,8 +825,10 @@ async function renderSavedMenuOrBuildOne() {
   const storedMenuRecipes = getMenuRecipesFromIds(currentMenuRecipeIds);
 
   if (storedMenuRecipes.length === currentMenuRecipeIds.length && storedMenuRecipes.length > 0) {
-    groceryItems = buildGroceryItemsFromMenu(storedMenuRecipes, groceryItems);
+    syncIncludedRecipeIdsWithMenu();
+    groceryItems = rebuildGroceryItems(getIncludedMenuRecipes(), groceryItems);
     renderWeekMenu(storedMenuRecipes);
+    renderGroceryRecipeFilters();
     renderGroceryList();
     updateSyncStatus();
     return;
@@ -653,10 +846,57 @@ async function toggleGroceryItem(itemKey, checked) {
   updateSyncStatus();
 }
 
+async function setIncludedRecipes(recipeIds) {
+  includedGroceryRecipeIds = recipeIds.map(String);
+  groceryItems = rebuildGroceryItems(getIncludedMenuRecipes(), groceryItems);
+  renderGroceryRecipeFilters();
+  renderGroceryList();
+  await saveWeekMenuState();
+  await saveGroceryItems();
+  updateSyncStatus();
+}
+
+async function addManualGroceryItem(name) {
+  const normalizedName = normalizeIngredientName(name);
+
+  if (!normalizedName) {
+    return;
+  }
+
+  const existingManualItem = groceryItems.find(
+    (item) =>
+      item.sourceType === "manual" &&
+      normalizeIngredientName(item.name).toLowerCase() === normalizedName.toLowerCase()
+  );
+
+  if (existingManualItem) {
+    groceryItems = groceryItems.map((item) =>
+      item.key === existingManualItem.key
+        ? { ...item, checked: false, name: normalizedName }
+        : item
+    );
+  } else {
+    groceryItems = sortGroceryItems([
+      buildManualGroceryItem(normalizedName),
+      ...groceryItems,
+    ]);
+  }
+
+  renderGroceryList();
+  await saveGroceryItems();
+  updateSyncStatus();
+}
+
+async function removeManualGroceryItem(itemKey) {
+  groceryItems = groceryItems.filter((item) => item.key !== itemKey);
+  renderGroceryList();
+  await saveGroceryItems();
+  updateSyncStatus();
+}
+
 async function addRecipe(recipe) {
   if (!supabaseClient) {
-    recipes = [recipe, ...recipes];
-    saveRecipesToLocalStorage();
+    upsertRecipeInState(recipe);
     return;
   }
 
@@ -677,15 +917,12 @@ async function addRecipe(recipe) {
     throw error;
   }
 
-  recipes = [normalizeRecipe(data), ...recipes];
+  upsertRecipeInState(data);
 }
 
 async function updateRecipe(updatedRecipe) {
   if (!supabaseClient) {
-    recipes = recipes.map((recipe) =>
-      String(recipe.id) === String(updatedRecipe.id) ? updatedRecipe : recipe
-    );
-    saveRecipesToLocalStorage();
+    upsertRecipeInState(updatedRecipe);
     return;
   }
 
@@ -694,22 +931,26 @@ async function updateRecipe(updatedRecipe) {
   );
   const targetId = foundRecipe ? foundRecipe.id : updatedRecipe.id;
 
-  const { error } = await supabaseClient
+  const { data, error } = await supabaseClient
     .from("recipes")
     .update({
       name: updatedRecipe.name,
       ingredients: updatedRecipe.ingredients,
     })
-    .eq("id", targetId);
+    .eq("id", targetId)
+    .select("id, name, ingredients")
+    .single();
 
   if (error) {
-    setStorageStatus("Supabase update failed. Please try again.", "error");
+    setStorageStatus(
+      "Supabase blocked recipe edits. Add an UPDATE policy for the recipes table, then try again.",
+      "error"
+    );
     throw error;
   }
 
-  recipes = recipes.map((recipe) =>
-    String(recipe.id) === String(updatedRecipe.id) ? updatedRecipe : recipe
-  );
+  upsertRecipeInState(data);
+  setStorageStatus("Recipe edits saved to Supabase.", "success");
 }
 
 async function removeRecipe(recipeId) {
@@ -732,6 +973,41 @@ async function removeRecipe(recipeId) {
   }
 
   recipes = recipes.filter((recipe) => String(recipe.id) !== String(recipeId));
+  saveRecipesToLocalStorage();
+}
+
+async function submitEditedRecipeForm(form) {
+  const recipeId = form.dataset.editFormId;
+  const nameInput = form.querySelector("input[name='recipeName']");
+  const ingredientsInput = form.querySelector("textarea[name='recipeIngredients']");
+
+  if (!recipeId || !nameInput || !ingredientsInput) {
+    return;
+  }
+
+  const name = nameInput.value.trim();
+  const ingredients = parseIngredients(ingredientsInput.value);
+
+  if (!name || ingredients.length === 0) {
+    form.reportValidity();
+    return;
+  }
+
+  const updatedRecipe = {
+    id: recipeId,
+    name,
+    ingredients,
+  };
+
+  await updateRecipe(updatedRecipe);
+  editingRecipeId = null;
+  renderRecipes();
+
+  const currentMenuRecipes = getMenuRecipesFromIds(currentMenuRecipeIds);
+
+  if (currentMenuRecipes.some((recipe) => String(recipe.id) === String(recipeId))) {
+    await syncMenuAndGroceries(currentMenuRecipes);
+  }
 }
 
 recipeForm.addEventListener("submit", async (event) => {
@@ -765,6 +1041,7 @@ recipeList.addEventListener("click", async (event) => {
   const removeButton = event.target.closest("[data-remove-id]");
   const editButton = event.target.closest("[data-edit-id]");
   const cancelButton = event.target.closest("[data-cancel-id]");
+  const saveButton = event.target.closest("[data-save-id]");
 
   if (removeButton) {
     try {
@@ -790,6 +1067,22 @@ recipeList.addEventListener("click", async (event) => {
     renderRecipes();
     return;
   }
+
+  if (saveButton) {
+    event.preventDefault();
+
+    const form = saveButton.closest("[data-edit-form-id]");
+
+    if (!form) {
+      return;
+    }
+
+    try {
+      await submitEditedRecipeForm(form);
+    } catch (error) {
+      console.error(error);
+    }
+  }
 });
 
 recipeList.addEventListener("submit", async (event) => {
@@ -801,41 +1094,12 @@ recipeList.addEventListener("submit", async (event) => {
 
   event.preventDefault();
 
-  const recipeId = form.dataset.editFormId;
-  const nameInput = form.querySelector("input[name='recipeName']");
-  const ingredientsInput = form.querySelector("textarea[name='recipeIngredients']");
-
-  if (!nameInput || !ingredientsInput) {
-    return;
-  }
-
-  const name = nameInput.value.trim();
-  const ingredients = parseIngredients(ingredientsInput.value);
-
-  if (!name || ingredients.length === 0) {
-    return;
-  }
-
-  const updatedRecipe = {
-    id: recipeId,
-    name,
-    ingredients,
-  };
-
   try {
-    await updateRecipe(updatedRecipe);
-    editingRecipeId = null;
-    renderRecipes();
-
-    const currentMenuRecipes = getMenuRecipesFromIds(currentMenuRecipeIds);
-
-    if (currentMenuRecipes.some((recipe) => String(recipe.id) === String(recipeId))) {
-      await syncMenuAndGroceries(currentMenuRecipes);
-    }
+    await submitEditedRecipeForm(form);
   } catch (error) {
     console.error(error);
   }
-});
+}, true);
 
 groceryList.addEventListener("change", async (event) => {
   const checkbox = event.target.closest("[data-grocery-key]");
@@ -846,6 +1110,57 @@ groceryList.addEventListener("change", async (event) => {
 
   try {
     await toggleGroceryItem(checkbox.dataset.groceryKey, checkbox.checked);
+  } catch (error) {
+    console.error(error);
+  }
+});
+
+groceryRecipeFilters.addEventListener("change", async (event) => {
+  const recipeCheckbox = event.target.closest("[data-grocery-recipe-id]");
+
+  if (!recipeCheckbox) {
+    return;
+  }
+
+  const selectedRecipeIds = [
+    ...groceryRecipeFilters.querySelectorAll("[data-grocery-recipe-id]:checked"),
+  ].map((input) => input.dataset.groceryRecipeId);
+
+  try {
+    await setIncludedRecipes(selectedRecipeIds);
+  } catch (error) {
+    console.error(error);
+  }
+});
+
+groceryItemForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const itemName = groceryItemNameInput.value.trim();
+
+  if (!itemName) {
+    groceryItemForm.reportValidity();
+    return;
+  }
+
+  try {
+    await addManualGroceryItem(itemName);
+    groceryItemForm.reset();
+    groceryItemNameInput.focus();
+  } catch (error) {
+    console.error(error);
+  }
+});
+
+groceryList.addEventListener("click", async (event) => {
+  const removeButton = event.target.closest("[data-remove-grocery-key]");
+
+  if (!removeButton) {
+    return;
+  }
+
+  try {
+    await removeManualGroceryItem(removeButton.dataset.removeGroceryKey);
   } catch (error) {
     console.error(error);
   }
@@ -896,6 +1211,7 @@ async function initializeApp() {
   await loadWeekMenuState();
   await loadGroceryItems();
   renderRecipes();
+  renderGroceryRecipeFilters();
   renderGroceryList();
   await renderSavedMenuOrBuildOne();
 }
