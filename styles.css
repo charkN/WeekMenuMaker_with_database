@@ -21,6 +21,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  font-size: 14px;
   font-family: "Manrope", sans-serif;
   color: var(--text);
   background-color: var(--background);
@@ -59,8 +60,11 @@ body::after {
 }
 
 .app-shell {
-  width: min(1120px, calc(100% - 2rem));
-  margin: 2rem auto 3rem;
+  width: min(390px, 100%);
+  height: min(844px, 100vh);
+  margin: 0 auto;
+  overflow-y: auto;
+  padding: 0.8rem;
 }
 
 .hero-card,
@@ -74,8 +78,8 @@ body::after {
 }
 
 .hero-card {
-  padding: 1.5rem;
-  margin-bottom: 1.5rem;
+  padding: 1.15rem;
+  margin-bottom: 1rem;
 }
 img {
 
@@ -102,24 +106,24 @@ img {
 }
 
 .hero-decor {
-  width: clamp(130px, 18vw, 220px);
-  top: 0.2rem;
-  right: 0.3rem;
+  width: 96px;
+  top: 0.45rem;
+  right: 0.55rem;
   transform: rotate(8deg);
 }
 
 .menu-decor {
-  width: 180px;
-  right: -1.6rem;
-  bottom: -1.4rem;
+  width: 118px;
+  right: -0.6rem;
+  bottom: -0.7rem;
   opacity: 1;
   transform: rotate(-10deg);
 }
 
 .recipe-decor {
-  width: 180px;
-  top: 0.2rem;
-  right: -1rem;
+  width: 112px;
+  top: 0.55rem;
+  right: 0.25rem;
   opacity: 1;
   transform: rotate(10deg);
 }
@@ -149,11 +153,11 @@ h2 {
 }
 
 h1 {
-  font-size: clamp(2.5rem, 5vw, 4.75rem);
+  font-size: 3.2rem;
 }
 
 h2 {
-  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  font-size: 2.05rem;
 }
 
 h3 {
@@ -163,21 +167,21 @@ h3 {
 
 .hero-copy {
   max-width: 52ch;
-  margin: 0.95rem 0 0;
+  margin: 0.7rem 0 0;
   color: var(--muted);
-  font-size: 1.02rem;
-  line-height: 1.6;
+  font-size: 0.95rem;
+  line-height: 1.45;
 }
 
 .storage-status {
-  margin: 1rem 0 0;
-  padding: 0.85rem 1rem;
-  border-radius: 18px;
+  margin: 0.8rem 0 0;
+  padding: 0.7rem 0.8rem;
+  border-radius: 16px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.72);
   color: var(--secondary);
-  font-size: 0.95rem;
-  line-height: 1.5;
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .storage-status[data-tone="success"] {
@@ -197,21 +201,22 @@ h3 {
 
 .block-tabs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  margin: 0 0 1.5rem;
+  flex-wrap: nowrap;
+  gap: 0.45rem;
+  margin: 0 0 1rem;
 }
 
 .block-tab {
-  flex: 1 1 150px;
-  min-height: 3rem;
-  padding: 0.85rem 1.1rem;
+  flex: 1 1 0;
+  min-height: 2.55rem;
+  padding: 0.65rem 0.55rem;
   border: 1px solid rgba(255, 255, 255, 0.38);
   border-radius: 999px;
   background: #7555c518;
   color: var(--muted);
   cursor: pointer;
   font: inherit;
+  font-size: 0.88rem;
   font-weight: 800;
   transition:
     transform 180ms ease,
@@ -249,27 +254,26 @@ h3 {
 }
 
 .panel {
-  padding: 1.4rem;
+  padding: 1rem;
 }
 
 .recipe-panel {
-  padding-top: 8rem;
+  padding-top: 5.4rem;
 }
 
 .panel-heading {
-  display: flex;
+  display: grid;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.2rem;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
 }
 
 .menu-actions,
 .menu-chooser-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  justify-content: flex-end;
+  gap: 0.55rem;
+  justify-content: flex-start;
 }
 
 .primary-button,
@@ -295,12 +299,12 @@ h3 {
 }
 
 .primary-button {
-  padding: 1rem 1.35rem;
-  min-width: 190px;
+  padding: 0.78rem 1rem;
+  min-width: 0;
 }
 
 .secondary-button {
-  padding: 0.9rem 1.2rem;
+  padding: 0.78rem 1rem;
   align-self: flex-start;
 }
 
@@ -360,8 +364,8 @@ h3 {
 input,
 textarea {
   width: 100%;
-  padding: 0.95rem 1rem;
-  border-radius: 18px;
+  padding: 0.78rem 0.85rem;
+  border-radius: 15px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.7);
   color: var(--text);
@@ -392,7 +396,7 @@ textarea:focus {
   width: min(520px, 100%);
   max-height: min(720px, calc(100vh - 2rem));
   overflow: auto;
-  padding: 1.4rem;
+  padding: 1rem;
   border: 1px solid rgba(255, 255, 255, 0.88);
   border-radius: 28px;
   background: var(--surface);
@@ -400,11 +404,10 @@ textarea:focus {
 }
 
 .modal-header {
-  display: flex;
+  display: grid;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1.2rem;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
 }
 
 .menu-chooser-form,
@@ -614,9 +617,9 @@ textarea:focus {
   align-items: center;
   justify-content: space-between;
   gap: 0.85rem;
-  padding: 1rem 1.1rem;
+  padding: 0.82rem 0.9rem;
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: 18px;
   background: var(--surface-strong);
 }
 
@@ -667,8 +670,8 @@ textarea:focus {
 .day-card {
   background: #f6f6f886;
   border: 1px solid var(--line);
-  border-radius: 22px;
-  padding: 1rem;
+  border-radius: 18px;
+  padding: 0.85rem;
   transition: transform 240ms ease, border-color 240ms ease, box-shadow 240ms ease;
 }
 
@@ -707,7 +710,7 @@ textarea:focus {
 .recipe-card h4,
 .day-card h4 {
   margin: 0;
-  font-size: 1.08rem;
+  font-size: 1rem;
 }
 
 .source-link {
@@ -719,10 +722,10 @@ textarea:focus {
 }
 
 .ingredient-list {
-  margin: 0.9rem 0 0;
+  margin: 0.7rem 0 0;
   padding-left: 1.2rem;
   color: var(--muted);
-  line-height: 1.55;
+  line-height: 1.45;
 }
 
 .edit-actions {
@@ -748,8 +751,8 @@ textarea:focus {
 
 .empty-state {
   margin: 0;
-  padding: 1rem;
-  border-radius: 18px;
+  padding: 0.85rem;
+  border-radius: 15px;
   border: 1px dashed rgba(17, 17, 17, 0.18);
   color: var(--muted);
   background: rgba(255, 255, 255, 0.52);
@@ -765,7 +768,7 @@ textarea:focus {
   }
 
   .primary-button {
-    width: 100%;
+    width: auto;
   }
 }
 
